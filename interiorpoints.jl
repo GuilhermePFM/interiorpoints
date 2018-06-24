@@ -5,32 +5,8 @@
 # Guilherme Pereira Freire Machado
 
 function interior_points(A::Array{Float64}, b::Array{Float64}, c::Array{Float64})
-    err = 1e-3
-    α = 0.9
 
-    # 1) initialization
-    x, s, p, A, b, c = initialization(A, b, c)
-    n = size(A)[2]
-
-    maxit = 100
-    k=0
-    for i in 1:maxit
-        println(i)
-        # 2) 1st test for convergence
-        if optimality_test(s, x, err)
-            # convergiu
-            return "gg" # todo
-        end
-        
-        # 3) computation of newton directions
-        μ = 1 *  x' * s / n # ρ *
-        dx, dp, ds = compute_directions(x, s, p, μ, A, b, c)
-        
-        # 4) and 5) update variables
-        x, s, p = update_variables(x, s, p, dx, dp, ds, α)
-
-        k += 1
-    end
+    interior_bigM(A, b, c)
 
 end
 
@@ -117,67 +93,83 @@ end
 
 function interior_bigM(A, b, c)
     m, n = size(A)
+    
+    U = maximum(c)
+    M = U*1e5
 
-    x0 = ones(n)
-
-    v = b - A*x0
-
-    nv = length(v)
-
-    if all(v .== zeros(n))
-
-    end
-
-    # new opt problem
-    c_1 = [zeros(n) ; 1]
-    A_1 = [A ones(nv)]
+    # add slack variables
+    c_1 = [c ; M]
+    A_1 = [A (b - A*ones(n))]
     b_1 = b
 
-    # initial guess
-    x0 = [v; 1]
+    # initial feasible solution
+    x0 = ones(n+1)
+    p = ones(m)#(c'*A)'
+    s0 = (c_1' - p'A_1)'
 
-    interior_algorithm(A_1, b_1, c_1, x0, s, p)
-    # r, z, status = Simplex([A_1 eye(m) ], b, [c_1; zeros(m)])
-
-    # u value found
-    u = r[n+1]
-
-    # update v
-    v = v * u
+    # A=A_1
+    # c=c_1
+    # x=x0
+    # s=s0'
+    x, p, s = interior_algorithm(A_1, b_1, c_1, x0, s0, p)
+    
 
     return v
 end 
 
 function interior_algorithm(A, b, c, x, s, p)
-    err = 1e-3
+    err = 1e-5
     α = 0.9
-
+    ρ = 1.0
     n = size(A)[2]
+    μ = 0.0
+    dx = 0.0
 
     maxit = 100
     k=0
     for i in 1:maxit
-        println(i)
+        println("It: $i - ϵ = $(convergence_error(s, x, μ)) - x = $x")
+
         # 2) 1st test for convergence
-        if optimality_test(s, x, err)
+        if i > 40 && optimality_test(s, x, μ, err) && maximum(abs.(dx)) < err
             # convergiu
             println("Interior Points algorithm converged!")
             return x, s, p
         end
         
         # 3) computation of newton directions
-        μ = 1 *  x' * s / n # ρ *
+        μ = 0.9 *  x' * s / n 
         dx, dp, ds = compute_directions(x, s, p, μ, A, b, c)
-        
+
+        # 2nd test for convergence
+        if maximum(abs.([dx ; dp; ds])) <= err
+            # convergiu
+            println("Interior Points algorithm converged!")
+            return x, s, p
+        end
+
         # 4) and 5) update variables
-        x, s, p = update_variables(x, s, p, dx, dp, ds, α)
+        x, s, p, unbounded = update_variables(x, s, p, dx, dp, ds, α)
+
+        if unbounded
+            status = -1
+            return x, s, p, status
+        end
 
         k += 1
     end
 end
 
-function optimality_test(s::Array{Float64}, x::Array{Float64}, err::Float64)
-    return s'*x < err
+function optimality_test(s::Array{Float64}, x::Array{Float64}, μ::Float64, err::Float64)
+    nx = length(x)
+    op = convergence_error(s, x, μ)
+    return op < err
+end
+
+function convergence_error(s::Array{Float64}, x::Array{Float64}, μ::Float64)
+    nx = length(x)
+    op = x'*s - (μ*ones(nx)')*ones(nx)
+    return op
 end
 
 function compute_directions(x::Array{Float64}, s::Array{Float64}, p::Array{Float64}, μ::Float64,  A::Array{Float64}, b::Array{Float64}, c::Array{Float64})
@@ -213,11 +205,20 @@ function update_variables(x::Array{Float64}, s::Array{Float64}, p::Array{Float64
     ratio_s[ds .>= 0] = Inf
     βd = minimum([1, α*minimum(ratio_s)]) 
     
+    # check for unbounded problem
+    if any(ds .> 0) && βd > 0
+        println("The problem is unbounded! ds: $ds - βd = $βd")
+        unbounded = true
+        return x, s, p, unbounded
+    end
+    
     # update variables
     x = x + βp * dx
     s = s + βd * ds
     p = p + βd * dp
-    return x, s, p
+    unbounded = false
+
+    return x, s, p, unbounded
 end
 
 function open_log(A::Array{Float64,2}, b::Array{Float64,1}, c::Array{Float64,1})
@@ -307,16 +308,16 @@ function problemas()
     # b) Prob 2
     println("b) Problema ilimitado")
     println("")
-    A = float([0.5 -1 1 0; -4 1 0 1])
+    A = float([0.5 -1 ; -4 1 ])
     b = float([0.5 ; 1])
-    c = float([1 ; 1; 0; 0])
+    c = float([1 ; 1])
     x,z,status = interior_points(A, b, c)
     
     # c) Prob 3 - fase 1
     println("c) Problema fase 1")
     println("")
-    A = float([2 1 1 0 0; 1 2 0 1 0; -1 -1 0 0 1])
+    A = float([2 1; 1 2 ; -1 -1 ])
     b = float([4 ; 4 ; -1])
-    c = float([4 ; 3; 0; 0; 0])
+    c = float([4 ; 3])
     x,z,status = interior_points(A, b, c)
 end
