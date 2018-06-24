@@ -6,8 +6,10 @@
 
 function interior_points(A::Array{Float64}, b::Array{Float64}, c::Array{Float64})
 
-    interior_bigM(A, b, c)
+    open_log_i(A, b, c)
+    x, p, s, status = interior_bigM(A, b, c)
 
+    return x, p, s, status
 end
 
 function initialization(A::Array{Float64,2}, b::Array{Float64}, c::Array{Float64})
@@ -90,34 +92,50 @@ function interior_phase1(A, b, c)
     return v
 end 
 
-
 function interior_bigM(A, b, c)
+    stream = get_log_i()
+    
     m, n = size(A)
     
     U = maximum(c)
     M = U*1e5
-
-    # add slack variables
-    c_1 = [c ; M]
-    A_1 = [A (b - A*ones(n))]
-    b_1 = b
-
-    # initial feasible solution
-    x0 = ones(n+1)
-    p = ones(m)#(c'*A)'
-    s0 = (c_1' - p'A_1)'
-
-    # A=A_1
-    # c=c_1
-    # x=x0
-    # s=s0'
-    x, p, s = interior_algorithm(A_1, b_1, c_1, x0, s0, p)
     
+    # add bigM variable if necessary
+    if any((b - A*ones(n)) .!= 0)
+        c_1 = [c ; M]
+        A_1 = [A (b - A*ones(n))]
+        b_1 = b
+        # initial feasible solution
+        x0 = ones(n+1)
+    else
+        c_1 = c
+        A_1 = A
+        b_1 = b
+        # initial feasible solution
+        x0 = ones(n)
+    end
+    p = (c'[1:(m)]*A[:,1:(m)])' # ones(m)#
+    s0 = (c_1' - p'A_1)'
+    
+    A=A_1
+    c=c_1
+    x=x0
+    s=s0
+    pwrite(stream, "Usando big M para comecar no ponto viavel x = e")
+    pwrite(stream, "Problema:")
+    pwrite(stream, "A = $A_1")
+    pwrite(stream, "b = $b_1")
+    pwrite(stream, "x0 = $x0")
+    pwrite(stream, "s0 = $s0")
+    pwrite(stream, "p = $p")
+    pwrite(stream, "")
 
-    return v
+    x, p, s, status = interior_algorithm(A_1, b_1, c_1, x0, s0, p, stream)
+
+    return x, p, s, status
 end 
 
-function interior_algorithm(A, b, c, x, s, p)
+function interior_algorithm(A, b, c, x, s, p, stream)
     err = 1e-5
     α = 0.9
     ρ = 1.0
@@ -125,16 +143,24 @@ function interior_algorithm(A, b, c, x, s, p)
     μ = 0.0
     dx = 0.0
 
-    maxit = 100
+    maxit = 200
     k=0
     for i in 1:maxit
-        println("It: $i - ϵ = $(convergence_error(s, x, μ)) - x = $x")
+        pwrite(stream, "It: $i - ϵ = $(convergence_error(s, x, μ)) - x = $x")
 
         # 2) 1st test for convergence
         if i > 40 && optimality_test(s, x, μ, err) && maximum(abs.(dx)) < err
             # convergiu
-            println("Interior Points algorithm converged!")
-            return x, s, p
+            status = 1
+
+            pwrite(stream, "Interior Points algorithm converged! ( s*x criteria)")
+           
+            # if check_infeasible(x)
+            #     status = -2
+            # end
+
+            result_log_i(i, x,  (c'*x), status, stream)
+            return x, s, p, status
         end
         
         # 3) computation of newton directions
@@ -144,26 +170,52 @@ function interior_algorithm(A, b, c, x, s, p)
         # 2nd test for convergence
         if maximum(abs.([dx ; dp; ds])) <= err
             # convergiu
-            println("Interior Points algorithm converged!")
-            return x, s, p
+            status = 1
+            
+            pwrite(stream, "Interior Points algorithm converged! ( abs(d) criteria)")
+            # if check_infeasible(x)
+            #     status = -2
+            # end
+
+            result_log_i(i, x,  (c'*x), status, stream)
+            return x, s, p, status
         end
 
         # 4) and 5) update variables
         x, s, p, unbounded = update_variables(x, s, p, dx, dp, ds, α)
 
+        # update rho in case where convergence get stuck
+        # ρ = update_rho(ρ, x_new, x)
+        # x = x_new
+
         if unbounded
             status = -1
+            result_log_i(i, x, (c'*x), status, stream)
             return x, s, p, status
         end
 
         k += 1
     end
+
+    pwrite(stream, "Maximum number of iterations($maxit) exceeded!")
+    result_log_i(maxit, x, (c'*x), 0, stream)
+
+    return x, s, p, 0
 end
 
 function optimality_test(s::Array{Float64}, x::Array{Float64}, μ::Float64, err::Float64)
     nx = length(x)
     op = convergence_error(s, x, μ)
     return op < err
+end
+
+function check_infeasible(x)
+    if round(x[end],2) > 0
+        println(x)
+        return true
+    end
+
+    return false
 end
 
 function convergence_error(s::Array{Float64}, x::Array{Float64}, μ::Float64)
@@ -196,21 +248,28 @@ end
 
 function update_variables(x::Array{Float64}, s::Array{Float64}, p::Array{Float64}, dx::Array{Float64}, dp::Array{Float64}, ds::Array{Float64}, α::Float64)
     # compute step β for primal
-    ratio_x = -x ./ dx
-    ratio_x[dx .>= 0] = Inf
+    ratio_x = round(-x ./ dx, 3)
+    ratio_x[ -ratio_x .>= 0] = Inf
     βp = minimum([1, α*minimum(ratio_x)]) 
     
-    # compute step β for dual
-    ratio_s = -s ./ ds
-    ratio_s[ds .>= 0] = Inf
+    # compute step β for dual slack
+    ratio_s = round(-s ./ ds, 3)
+    ratio_s[-ratio_s .>= 0] = Inf
     βd = minimum([1, α*minimum(ratio_s)]) 
     
+    # compute step β for dual
+    ratio_p = round(-p ./ dp, 3)
+    ratio_p[-ratio_p .>= 0] = Inf
+    βd = minimum([1, α*minimum(ratio_p)]) 
+
     # check for unbounded problem
-    if any(ds .> 0) && βd > 0
-        println("The problem is unbounded! ds: $ds - βd = $βd")
-        unbounded = true
-        return x, s, p, unbounded
-    end
+    # if all(round.(ds, 3) .> 0)#any(round.(ds, 3)[1:-1] .> 0) 
+    #     println(ds)
+    #     println(ratio_s)
+    #     println("The problem is unbounded! ds: $ds - βd = $βd")
+    #     unbounded = true
+    #     return x, s, p, unbounded
+    # end
     
     # update variables
     x = x + βp * dx
@@ -221,8 +280,15 @@ function update_variables(x::Array{Float64}, s::Array{Float64}, p::Array{Float64
     return x, s, p, unbounded
 end
 
-function open_log(A::Array{Float64,2}, b::Array{Float64,1}, c::Array{Float64,1})
-    fname = "Simplex.log"
+function update_rho(ρ, x_new, x_old)
+    if maximum(abs.(x_new - x_old)) < 1e-3 && ρ > 0.5
+        ρ -= 0.05
+    end
+    return ρ
+end 
+
+function open_log_i(A::Array{Float64,2}, b::Array{Float64,1}, c::Array{Float64,1})
+    fname = "Interior_Points.log"
     if isfile(fname)
         stream = open(fname, "a")
         pwrite(stream, "=======================")
@@ -249,26 +315,18 @@ function open_log(A::Array{Float64,2}, b::Array{Float64,1}, c::Array{Float64,1})
     nothing
 end
 
-function get_log(state::Int)
-    fname = "SimplexFase2.log"
+function get_log_i()
+    fname = "Interior_Points.log"
     stream = open(fname, "a")
-    if state == 1
-        pwrite(stream, "Simplex Fase 1")
-        pwrite(stream, "--------------")
-        
-    else
-        pwrite(stream, "Simplex Fase 2")
-        pwrite(stream, "--------------")
+    pwrite(stream, "Interior Points")
+    pwrite(stream, "--------------")
 
-    end
     return stream
 end
 
-function result_log(it::Int, x::Array{Float64,1}, bidx::Array{Int,1}, nidx::Array{Int,1}, z::Float64, status::Int, stream::IOStream)
+function result_log_i(it::Int, x::Array{Float64,1}, z::Float64, status::Int, stream::IOStream)
     pwrite(stream, "iter $it:")
     pwrite(stream, "x = $x")
-    pwrite(stream, "Base = $bidx")
-    pwrite(stream, "Nbase = $nidx")
     pwrite(stream, "")
     
     if status == 1
@@ -281,8 +339,20 @@ function result_log(it::Int, x::Array{Float64,1}, bidx::Array{Int,1}, nidx::Arra
     elseif status == -1
         pwrite(stream, "| Solucao ilimitada obtida:")
         pwrite(stream, "| -------------------------")
-        pwrite(stream, "| de = $x")
+        pwrite(stream, "| x = $x")
         pwrite(stream, "| z = $z")
+        pwrite(stream, "| status = $status")
+        pwrite(stream, "")
+    elseif status == 0 
+        pwrite(stream, "| Solucao subotima obtida:")
+        pwrite(stream, "| -------------------------")
+        pwrite(stream, "| x = $x")
+        pwrite(stream, "| z = $z")
+        pwrite(stream, "| status = $status")
+        pwrite(stream, "")
+    elseif status == -2 
+        pwrite(stream, "| Problema e inviavel:")
+        pwrite(stream, "| -------------------------")
         pwrite(stream, "| status = $status")
         pwrite(stream, "")
     end
@@ -300,24 +370,25 @@ function problemas()
     # a) Problema da Producao
     println("a) Problema da Producao")
     println("")
-    A = float([2 1; 1 2])
+    A = float([2 1 1 0; 1 2 0 1])
     b = float([4 ; 4])
-    c = float([4 ; 3])
+    c = float([4 ; 3; 0; 0])
     x,z,status = interior_points(A, b, c)
     
     # b) Prob 2
     println("b) Problema ilimitado")
     println("")
-    A = float([0.5 -1 ; -4 1 ])
+    A = float([0.5 -1 1 0; -4 1 0 1])
     b = float([0.5 ; 1])
-    c = float([1 ; 1])
+    c = float([1 ; 1; 0; 0])
     x,z,status = interior_points(A, b, c)
-    
+    A*x[1:(end-1)] .<= b
     # c) Prob 3 - fase 1
     println("c) Problema fase 1")
     println("")
-    A = float([2 1; 1 2 ; -1 -1 ])
+    A = float([2 1 1 0 0; 1 2 0 1 0; -1 -1 0 0 1])
     b = float([4 ; 4 ; -1])
-    c = float([4 ; 3])
+    c = float([4 ; 3; 0; 0; 0])
     x,z,status = interior_points(A, b, c)
+
 end
