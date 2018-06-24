@@ -12,53 +12,6 @@ function interior_points(A::Array{Float64}, b::Array{Float64}, c::Array{Float64}
     return x, p, s, status
 end
 
-function initialization(A::Array{Float64,2}, b::Array{Float64}, c::Array{Float64})
-    # get maximum value
-    mx = [maximum(A), maximum(b), maximum(c)]
-    U = maximum(mx)
-    M = U*1e5
-
-    # in order to get the center of the polyhedron:
-
-    # analytic center for P
-
-    # analytic center for Q
-    μ0 = 4 * (norm(c)^2 + M^2)^0.5
-
-    m, nx = size(A)
-
-    # x
-    x1 = ones(nx)
-    x2 = 1
-    x3 = 1
-    x = [x1; x2; x3] 
-    
-    # p
-    p1 = zeros(size(A)[1])
-    p2 = - μ0 
-    p = [p1; p2]
-
-    # s
-    e = ones(length(c))
-    s1 = c + μ0*e
-    s2 = M + μ0 
-    s3 = μ0
-    s = [s1; s2; s3]
-
-    # new c
-    c_new = [c; M; 0]
-
-    b_bar = (nx + 2) * b / (nx*(m*U)^m)
-    
-    # new A
-    A_new = [A (b_bar - A*ones(nx)) zeros(m); ones(nx)' 1 1] 
-    
-    # new b
-    b_new = [b_bar; nx + 2]
-
-    return x , s, p, A_new, b_new, c_new
-end
-
 function interior_phase1(A, b, c)
     m, n = size(A)
 
@@ -154,7 +107,11 @@ function interior_algorithm(A, b, c, x, s, p, stream)
             status = 1
 
             pwrite(stream, "Interior Points algorithm converged! ( s*x criteria)")
-           
+
+            if check_unbounded(A, b, c, x)
+                status = -1
+            end
+
             # if check_infeasible(x)
             #     status = -2
             # end
@@ -169,10 +126,14 @@ function interior_algorithm(A, b, c, x, s, p, stream)
 
         # 2nd test for convergence
         if maximum(abs.([dx ; dp; ds])) <= err
+            pwrite(stream, "Interior Points algorithm converged! ( abs(d) criteria)")
             # convergiu
             status = 1
-            
-            pwrite(stream, "Interior Points algorithm converged! ( abs(d) criteria)")
+            println(p)
+            println(s)
+            if check_unbounded(A, b, c, x)
+                status = -1
+            end
             # if check_infeasible(x)
             #     status = -2
             # end
@@ -218,6 +179,24 @@ function check_infeasible(x)
     return false
 end
 
+function check_unbounded(A, b, c, x)
+    # println("A=$A")
+    # println("b=$b")
+    # println("c=$c")
+    # println("x = $x")
+    x=round(x,3)
+
+    xb = x[x.>0]
+    B = A[:, x.>0]
+    cb = c[x.>0]
+    
+    xn = x[x.==0]
+    N = A[:, x.==0]
+    cn = c[ x.==0]
+
+    return all(cb'*B^-1*N .< cn')
+end
+
 function convergence_error(s::Array{Float64}, x::Array{Float64}, μ::Float64)
     nx = length(x)
     op = x'*s - (μ*ones(nx)')*ones(nx)
@@ -261,15 +240,6 @@ function update_variables(x::Array{Float64}, s::Array{Float64}, p::Array{Float64
     ratio_p = round(-p ./ dp, 3)
     ratio_p[-ratio_p .>= 0] = Inf
     βd = minimum([1, α*minimum(ratio_p)]) 
-
-    # check for unbounded problem
-    # if all(round.(ds, 3) .> 0)#any(round.(ds, 3)[1:-1] .> 0) 
-    #     println(ds)
-    #     println(ratio_s)
-    #     println("The problem is unbounded! ds: $ds - βd = $βd")
-    #     unbounded = true
-    #     return x, s, p, unbounded
-    # end
     
     # update variables
     x = x + βp * dx
@@ -382,7 +352,7 @@ function problemas()
     b = float([0.5 ; 1])
     c = float([1 ; 1; 0; 0])
     x,z,status = interior_points(A, b, c)
-    A*x[1:(end-1)] .<= b
+    
     # c) Prob 3 - fase 1
     println("c) Problema fase 1")
     println("")
