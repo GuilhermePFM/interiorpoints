@@ -7,9 +7,9 @@
 function interior_points(A::Array{Float64}, b::Array{Float64}, c::Array{Float64})
 
     open_log_i(A, b, c)
-    x, p, s, status = interior_bigM(A, b, c)
+    x, p, s, status, it = interior_bigM(A, b, c)
 
-    return x, p, s, status
+    return x, p, s, status, it
 end
 
 function interior_phase1(A, b, c)
@@ -83,9 +83,9 @@ function interior_bigM(A, b, c)
     pwrite(stream, "p = $p")
     pwrite(stream, "")
 
-    x, p, s, status = interior_algorithm(A_1, b_1, c_1, x0, s0, p, stream)
+    x, s, p, status, it = interior_algorithm(A_1, b_1, c_1, x0, s0, p, stream)
 
-    return x, p, s, status
+    return x, p, s, status, it
 end 
 
 function interior_algorithm(A, b, c, x, s, p, stream)
@@ -97,7 +97,7 @@ function interior_algorithm(A, b, c, x, s, p, stream)
     dx = 0.0
 
     maxit = 200
-    k=0
+    it=0
     for i in 1:maxit
         pwrite(stream, "It: $i - ϵ = $(convergence_error(s, x, μ)) - x = $x")
 
@@ -117,7 +117,7 @@ function interior_algorithm(A, b, c, x, s, p, stream)
             # end
 
             result_log_i(i, x,  (c'*x), status, stream)
-            return x, s, p, status
+            return x, s, p, status, it
         end
         
         # 3) computation of newton directions
@@ -139,7 +139,7 @@ function interior_algorithm(A, b, c, x, s, p, stream)
             # end
 
             result_log_i(i, x,  (c'*x), status, stream)
-            return x, s, p, status
+            return x, s, p, status, it
         end
 
         # 4) and 5) update variables
@@ -152,16 +152,16 @@ function interior_algorithm(A, b, c, x, s, p, stream)
         if unbounded
             status = -1
             result_log_i(i, x, (c'*x), status, stream)
-            return x, s, p, status
+            return x, s, p, status, it
         end
 
-        k += 1
+        it += 1
     end
 
     pwrite(stream, "Maximum number of iterations($maxit) exceeded!")
     result_log_i(maxit, x, (c'*x), 0, stream)
 
-    return x, s, p, 0
+    return x, s, p, 0, it
 end
 
 function optimality_test(s::Array{Float64}, x::Array{Float64}, μ::Float64, err::Float64)
