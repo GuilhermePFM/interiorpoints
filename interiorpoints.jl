@@ -11,14 +11,6 @@ function interior_points(A::Array{Float64}, b::Array{Float64}, c::Array{Float64}
 
     # initial guess
     m, n = size(A)
-    
-    # x0 = A \ b
-    # if all(c .> 0)
-    #     p0 =  zeros(m) #(c'[1:(m)]*A[:,1:(m)])' #
-    # else
-    #     p0 = zeros(m)
-    #     p0[c .<= 0] = 1
-    # end
 
     x0 = ones(n)
     p0 = zeros(m)
@@ -27,20 +19,6 @@ function interior_points(A::Array{Float64}, b::Array{Float64}, c::Array{Float64}
     x = ones(n)
     p = zeros(m)
     s = ones(n)
-
-    # if any(A*x0 .!= b)
-    #     throw("A*x0 .<= 0")
-    # end
-    # if any(s0 .< 0)
-    #     throw("s0 .<= 0")
-    # end
-    # if any(x0 .< 0)
-    #     throw("x0 .<= 0")
-    # end
-
-    # x = ones(n)
-    # p = abs.((c'[1:(m)]*A[:,1:(m)])') # ones(m)#
-    # s = ones(n)
 
     x, s, p, status, it = interior_algorithm(A, b, c, x0, s0, p0, stream, debug)
     # x, p, s, status, it = interior_bigM(A, b, c, debug)
@@ -142,7 +120,14 @@ function interior_algorithm(A, b, c, x, s, p, stream, debug=true)
             # convergiu
             status = 1
 
-            pwrite(stream, "Interior Points algorithm converged! ( s*x criteria)")
+            if norm(x) < norm(p) # check for unbounded problem
+                status = -1
+                pwrite(stream, "The problem is unbounded!")
+            else
+
+                pwrite(stream, "Interior Points algorithm converged! ( s*x criteria)")
+            end
+
 
             # if check_unbounded(A, b, c, x)
             #     status = -1
@@ -158,26 +143,8 @@ function interior_algorithm(A, b, c, x, s, p, stream, debug=true)
         
         # 3) computation of newton directions
         μ = ρ *  x' * s / n 
-        dx, ds, dp = compute_directions(x, s, p, μ, A, b, c)
+        dx, ds, dp = compute_directions_old(x, s, p, μ, A, b, c)
         ρ = update_rho(ρ, x+ dx, x)
-        
-        # 2nd test for convergence
-        # if maximum(abs.([dx ; dp; ds])) <= err
-        #     pwrite(stream, "Interior Points algorithm converged! ( abs(d) criteria)")
-        #     # convergiu
-        #     status = 1
-        #     println(p)
-        #     println(s)
-        #     if check_unbounded(A, b, c, x)
-        #         status = -1
-        #     end
-        #     # if check_infeasible(x)
-        #     #     status = -2
-        #     # end
-
-        #     result_log_i(i, x,  (c'*x), status, stream, debug)
-        #     return x, s, p, status, it
-        # end
 
         # 4) and 5) update variables
         x, s, p, unbounded = update_variables(x, s, p, dx, ds, dp, α)
@@ -247,13 +214,13 @@ function compute_directions(x::Array{Float64}, s::Array{Float64}, p::Array{Float
     D2 = diagm(x) * inv_s
     D = D2^0.5
 
-    parcial_1 = (A * D2 * A') \ A * D
+    parcial_1 = (A * D2 * A') \ (A * D)
     P = D * A' * parcial_1
     vμ = (diagm(x) \ D) * (μ * ones(nx) - diagm(x) * diagm(s) * ones(nx))
     
 
     dx = D * (I - P) * vμ
-    dp = -((A * D2 * A') \ A*D) * vμ
+    dp = -((A * D2 * A') \ (A*D)) * vμ
     ds = (D \ P) * vμ
 
      return dx, ds, dp
@@ -285,17 +252,14 @@ function update_variables(x::Array{Float64}, s::Array{Float64}, p::Array{Float64
     # compute step β for primal
     ratio_x = -x ./ dx
     ratio_x[ dx .>= 0] = Inf
+    # ratio_x = [v for (i,v) in enumerate(ratio_x) if dx[i] < 0]
     βp = minimum([1, α*minimum(ratio_x)]) 
     
     # compute step β for dual slack
     ratio_s = -s ./ ds
     ratio_s[ds .>= 0] = Inf
+    # ratio_s = [v for (i,v) in enumerate(ratio_s) if ds[i] < 0]
     βd = minimum([1, α*minimum(ratio_s)]) 
-    
-    # compute step β for dual
-    # ratio_p = round(-p ./ dp, 3)
-    # ratio_p[-ratio_p .>= 0] = Inf
-    # βd2 = minimum([1, α*minimum(ratio_p)]) 
     
     # update variables
     x = x + βp * dx
@@ -404,23 +368,22 @@ function problemas()
     A = float([2 1 1 0; 1 2 0 1])
     b = float([4 ; 4])
     c = -float([4 ; 3; 0; 0])
-    x,z,status = interior_points(A, b, c)
+    x, p, s, status, it = interior_points(A, b, c)
     
     # b) Prob 2
     println("b) Problema ilimitado")
     println("")
-    A = float([0.5 -1 -1 0; -4 1 0 -1])
+    A = float([0.5 -1 1 0; -4 1 0 1])
     b = float([0.5 ; 1])
     c = -float([1 ; 1; 0; 0])
-    x,z,status = interior_points(A, b, c)
- 
-    
+    x, p, s, status, it = interior_points(A, b, c)
+     
     # c) Prob 3 - fase 1
     println("c) Problema fase 1")
     println("")
     A = float([2 1 1 0 0; 1 2 0 1 0; -1 -1 0 0 1])
     b = float([4 ; 4 ; -1])
     c = -float([4 ; 3; 0; 0; 0])
-    x,z,status = interior_points(A, b, c)
+    x, p, s, status, it = interior_points(A, b, c)
 
 end
