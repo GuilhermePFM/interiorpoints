@@ -4,10 +4,46 @@
 
 # Guilherme Pereira Freire Machado
 
-function interior_points(A::Array{Float64}, b::Array{Float64}, c::Array{Float64})
+function interior_points(A::Array{Float64}, b::Array{Float64}, c::Array{Float64}, debug=true)
 
     open_log_i(A, b, c)
-    x, p, s, status, it = interior_bigM(A, b, c)
+    stream = get_log_i()
+
+    # initial guess
+    m, n = size(A)
+    
+    # x0 = A \ b
+    # if all(c .> 0)
+    #     p0 =  zeros(m) #(c'[1:(m)]*A[:,1:(m)])' #
+    # else
+    #     p0 = zeros(m)
+    #     p0[c .<= 0] = 1
+    # end
+
+    x0 = ones(n)
+    p0 = zeros(m)
+    s0 = ones(n)
+    
+    x = ones(n)
+    p = zeros(m)
+    s = ones(n)
+
+    # if any(A*x0 .!= b)
+    #     throw("A*x0 .<= 0")
+    # end
+    # if any(s0 .< 0)
+    #     throw("s0 .<= 0")
+    # end
+    # if any(x0 .< 0)
+    #     throw("x0 .<= 0")
+    # end
+
+    # x = ones(n)
+    # p = abs.((c'[1:(m)]*A[:,1:(m)])') # ones(m)#
+    # s = ones(n)
+
+    x, s, p, status, it = interior_algorithm(A, b, c, x0, s0, p0, stream, debug)
+    # x, p, s, status, it = interior_bigM(A, b, c, debug)
 
     return x, p, s, status, it
 end
@@ -45,7 +81,7 @@ function interior_phase1(A, b, c)
     return v
 end 
 
-function interior_bigM(A, b, c)
+function interior_bigM(A, b, c, debug)
     stream = get_log_i()
     
     m, n = size(A)
@@ -74,24 +110,24 @@ function interior_bigM(A, b, c)
     c=c_1
     x=x0
     s=s0
-    pwrite(stream, "Usando big M para comecar no ponto viavel x = e")
-    pwrite(stream, "Problema:")
-    pwrite(stream, "A = $A_1")
-    pwrite(stream, "b = $b_1")
-    pwrite(stream, "x0 = $x0")
-    pwrite(stream, "s0 = $s0")
-    pwrite(stream, "p = $p")
+    pwrite(stream, "Usando big M para comecar no ponto viavel x = e", debug)
+    pwrite(stream, "Problema:", debug)
+    pwrite(stream, "A = $A_1", debug)
+    pwrite(stream, "b = $b_1", debug)
+    pwrite(stream, "x0 = $x0", debug)
+    pwrite(stream, "s0 = $s0", debug)
+    pwrite(stream, "p = $p", debug)
     pwrite(stream, "")
 
-    x, s, p, status, it = interior_algorithm(A_1, b_1, c_1, x0, s0, p, stream)
+    x, s, p, status, it = interior_algorithm(A_1, b_1, c_1, x0, s0, p, stream, debug)
 
     return x, p, s, status, it
 end 
 
-function interior_algorithm(A, b, c, x, s, p, stream)
-    err = 1e-5
+function interior_algorithm(A, b, c, x, s, p, stream, debug=true)
+    err = 1e-3
     α = 0.9
-    ρ = 1.0
+    ρ = 0.5
     n = size(A)[2]
     μ = 0.0
     dx = 0.0
@@ -99,18 +135,18 @@ function interior_algorithm(A, b, c, x, s, p, stream)
     maxit = 200
     it=0
     for i in 1:maxit
-        pwrite(stream, "It: $i - ϵ = $(convergence_error(s, x, μ)) - x = $x")
+        pwrite(stream, "It: $i - ϵ = $(convergence_error(s, x, μ)) - x = $x", debug)
 
         # 2) 1st test for convergence
-        if i > 40 && optimality_test(s, x, μ, err) && maximum(abs.(dx)) < err
+        if s'*x < err  # i > 40 && optimality_test(s, x, μ, err) && maximum(abs.(dx)) < err
             # convergiu
             status = 1
 
             pwrite(stream, "Interior Points algorithm converged! ( s*x criteria)")
 
-            if check_unbounded(A, b, c, x)
-                status = -1
-            end
+            # if check_unbounded(A, b, c, x)
+            #     status = -1
+            # end
 
             # if check_infeasible(x)
             #     status = -2
@@ -121,37 +157,34 @@ function interior_algorithm(A, b, c, x, s, p, stream)
         end
         
         # 3) computation of newton directions
-        μ = 0.9 *  x' * s / n 
-        dx, dp, ds = compute_directions(x, s, p, μ, A, b, c)
-
+        μ = ρ *  x' * s / n 
+        dx, ds, dp = compute_directions(x, s, p, μ, A, b, c)
+        ρ = update_rho(ρ, x+ dx, x)
+        
         # 2nd test for convergence
-        if maximum(abs.([dx ; dp; ds])) <= err
-            pwrite(stream, "Interior Points algorithm converged! ( abs(d) criteria)")
-            # convergiu
-            status = 1
-            println(p)
-            println(s)
-            if check_unbounded(A, b, c, x)
-                status = -1
-            end
-            # if check_infeasible(x)
-            #     status = -2
-            # end
+        # if maximum(abs.([dx ; dp; ds])) <= err
+        #     pwrite(stream, "Interior Points algorithm converged! ( abs(d) criteria)")
+        #     # convergiu
+        #     status = 1
+        #     println(p)
+        #     println(s)
+        #     if check_unbounded(A, b, c, x)
+        #         status = -1
+        #     end
+        #     # if check_infeasible(x)
+        #     #     status = -2
+        #     # end
 
-            result_log_i(i, x,  (c'*x), status, stream)
-            return x, s, p, status, it
-        end
+        #     result_log_i(i, x,  (c'*x), status, stream, debug)
+        #     return x, s, p, status, it
+        # end
 
         # 4) and 5) update variables
-        x, s, p, unbounded = update_variables(x, s, p, dx, dp, ds, α)
-
-        # update rho in case where convergence get stuck
-        # ρ = update_rho(ρ, x_new, x)
-        # x = x_new
+        x, s, p, unbounded = update_variables(x, s, p, dx, ds, dp, α)
 
         if unbounded
             status = -1
-            result_log_i(i, x, (c'*x), status, stream)
+            result_log_i(i, x, (c'*x), status, stream, debug)
             return x, s, p, status, it
         end
 
@@ -210,6 +243,29 @@ function compute_directions(x::Array{Float64}, s::Array{Float64}, p::Array{Float
     ns = length(s)
     e = ones(nx)
 
+    inv_s = diagm(s) \ I 
+    D2 = diagm(x) * inv_s
+    D = D2^0.5
+
+    parcial_1 = (A * D2 * A') \ A * D
+    P = D * A' * parcial_1
+    vμ = (diagm(x) \ D) * (μ * ones(nx) - diagm(x) * diagm(s) * ones(nx))
+    
+
+    dx = D * (I - P) * vμ
+    dp = -((A * D2 * A') \ A*D) * vμ
+    ds = (D \ P) * vμ
+
+     return dx, ds, dp
+end
+
+function compute_directions_old(x::Array{Float64}, s::Array{Float64}, p::Array{Float64}, μ::Float64,  A::Array{Float64}, b::Array{Float64}, c::Array{Float64})
+    # solve linear system:
+    nx = length(x)
+    np = length(p)
+    ns = length(s)
+    e = ones(nx)
+
     matrix = [A zeros(size(A)[1], size(A')[2]) zeros(size(A)[1], nx) ;
             zeros(size(A')[1], size(A)[2]) A' eye(size(A')[1]) ;
             diagm(s) zeros(length(x), size(A')[2]) diagm(x)]
@@ -222,24 +278,24 @@ function compute_directions(x::Array{Float64}, s::Array{Float64}, p::Array{Float
     dp = d[(nx + 1) : (nx + np)]
     ds = d[(nx + np + 1) : end]
 
-     return dx, dp, ds
+     return dx, ds, dp
 end
 
-function update_variables(x::Array{Float64}, s::Array{Float64}, p::Array{Float64}, dx::Array{Float64}, dp::Array{Float64}, ds::Array{Float64}, α::Float64)
+function update_variables(x::Array{Float64}, s::Array{Float64}, p::Array{Float64}, dx::Array{Float64}, ds::Array{Float64}, dp::Array{Float64}, α::Float64)
     # compute step β for primal
-    ratio_x = round(-x ./ dx, 3)
-    ratio_x[ -ratio_x .>= 0] = Inf
+    ratio_x = -x ./ dx
+    ratio_x[ dx .>= 0] = Inf
     βp = minimum([1, α*minimum(ratio_x)]) 
     
     # compute step β for dual slack
-    ratio_s = round(-s ./ ds, 3)
-    ratio_s[-ratio_s .>= 0] = Inf
+    ratio_s = -s ./ ds
+    ratio_s[ds .>= 0] = Inf
     βd = minimum([1, α*minimum(ratio_s)]) 
     
     # compute step β for dual
-    ratio_p = round(-p ./ dp, 3)
-    ratio_p[-ratio_p .>= 0] = Inf
-    βd = minimum([1, α*minimum(ratio_p)]) 
+    # ratio_p = round(-p ./ dp, 3)
+    # ratio_p[-ratio_p .>= 0] = Inf
+    # βd2 = minimum([1, α*minimum(ratio_p)]) 
     
     # update variables
     x = x + βp * dx
@@ -251,35 +307,38 @@ function update_variables(x::Array{Float64}, s::Array{Float64}, p::Array{Float64
 end
 
 function update_rho(ρ, x_new, x_old)
-    if maximum(abs.(x_new - x_old)) < 1e-3 && ρ > 0.5
-        ρ -= 0.05
+    if maximum(abs.(x_new - x_old)) < 1
+        ρ *= 0.9
+
+    else
+        ρ = 0.8
     end
     return ρ
 end 
 
-function open_log_i(A::Array{Float64,2}, b::Array{Float64,1}, c::Array{Float64,1})
+function open_log_i(A::Array{Float64,2}, b::Array{Float64,1}, c::Array{Float64,1}, debug=true)
     fname = "Interior_Points.log"
     if isfile(fname)
         stream = open(fname, "a")
-        pwrite(stream, "=======================")
-        pwrite(stream, "Comeco da Solucao do PL")
-        pwrite(stream, "=======================")
-        pwrite(stream, "Problema:")
-        pwrite(stream, "A = $A")
-        pwrite(stream, "b = $b")
-        pwrite(stream, "c = $c")
-        pwrite(stream, "")
+        pwrite(stream, "=======================", debug)
+        pwrite(stream, "Comeco da Solucao do PL", debug)
+        pwrite(stream, "=======================", debug)
+        pwrite(stream, "Problema:", debug)
+        pwrite(stream, "A = $A", debug)
+        pwrite(stream, "b = $b", debug)
+        pwrite(stream, "c = $c", debug)
+        pwrite(stream, "", debug)
         close(stream)
     else
-        stream = open(fname, "w")
-        pwrite(stream, "=======================")
-        pwrite(stream, "Comeco da Solucao do PL")
-        pwrite(stream, "=======================")
-        pwrite(stream, "Problema:")
-        pwrite(stream, "A = $A")
-        pwrite(stream, "b = $b")
-        pwrite(stream, "c = $c")
-        pwrite(stream, "")
+        stream = open(fname, "w", debug)
+        pwrite(stream, "=======================", debug)
+        pwrite(stream, "Comeco da Solucao do PL", debug)
+        pwrite(stream, "=======================", debug)
+        pwrite(stream, "Problema:", debug)
+        pwrite(stream, "A = $A", debug)
+        pwrite(stream, "b = $b", debug)
+        pwrite(stream, "c = $c", debug)
+        pwrite(stream, "", debug)
         close(stream)
     end
     nothing
@@ -294,42 +353,44 @@ function get_log_i()
     return stream
 end
 
-function result_log_i(it::Int, x::Array{Float64,1}, z::Float64, status::Int, stream::IOStream)
-    pwrite(stream, "iter $it:")
-    pwrite(stream, "x = $x")
-    pwrite(stream, "")
+function result_log_i(it::Int, x::Array{Float64,1}, z::Float64, status::Int, stream::IOStream, debug=true)
+    pwrite(stream, "iter $it:", debug)
+    pwrite(stream, "x = $x", debug)
+    pwrite(stream, "", debug)
     
     if status == 1
-        pwrite(stream, "| Solucao otima obtida:")
-        pwrite(stream, "| ---------------------")
-        pwrite(stream, "| x = $x")
-        pwrite(stream, "| z = $z")
-        pwrite(stream, "| status = $status")
+        pwrite(stream, "| Solucao otima obtida:", debug)
+        pwrite(stream, "| ---------------------", debug)
+        pwrite(stream, "| x = $x", debug)
+        pwrite(stream, "| z = $z", debug)
+        pwrite(stream, "| status = $status", debug)
         pwrite(stream, "")
     elseif status == -1
-        pwrite(stream, "| Solucao ilimitada obtida:")
-        pwrite(stream, "| -------------------------")
-        pwrite(stream, "| x = $x")
-        pwrite(stream, "| z = $z")
-        pwrite(stream, "| status = $status")
-        pwrite(stream, "")
+        pwrite(stream, "| Solucao ilimitada obtida:", debug)
+        pwrite(stream, "| -------------------------", debug)
+        pwrite(stream, "| x = $x", debug)
+        pwrite(stream, "| z = $z", debug)
+        pwrite(stream, "| status = $status", debug)
+        pwrite(stream, "", debug)
     elseif status == 0 
-        pwrite(stream, "| Solucao subotima obtida:")
-        pwrite(stream, "| -------------------------")
-        pwrite(stream, "| x = $x")
-        pwrite(stream, "| z = $z")
-        pwrite(stream, "| status = $status")
+        pwrite(stream, "| Solucao subotima obtida:", debug)
+        pwrite(stream, "| -------------------------", debug)
+        pwrite(stream, "| x = $x", debug)
+        pwrite(stream, "| z = $z", debug)
+        pwrite(stream, "| status = $status", debug)
         pwrite(stream, "")
     elseif status == -2 
-        pwrite(stream, "| Problema e inviavel:")
-        pwrite(stream, "| -------------------------")
-        pwrite(stream, "| status = $status")
-        pwrite(stream, "")
+        pwrite(stream, "| Problema e inviavel:", debug)
+        pwrite(stream, "| -------------------------", debug)
+        pwrite(stream, "| status = $status", debug)
+        pwrite(stream, "", debug)
     end
 end
 
-function pwrite(stream::IOStream, string::AbstractString)
-    println(string)
+function pwrite(stream::IOStream, string::AbstractString, debug=true)
+    if debug
+        println(string)
+    end
     write(stream, string * "\n")
 end
 
@@ -342,23 +403,24 @@ function problemas()
     println("")
     A = float([2 1 1 0; 1 2 0 1])
     b = float([4 ; 4])
-    c = float([4 ; 3; 0; 0])
+    c = -float([4 ; 3; 0; 0])
     x,z,status = interior_points(A, b, c)
     
     # b) Prob 2
     println("b) Problema ilimitado")
     println("")
-    A = float([0.5 -1 1 0; -4 1 0 1])
+    A = float([0.5 -1 -1 0; -4 1 0 -1])
     b = float([0.5 ; 1])
-    c = float([1 ; 1; 0; 0])
+    c = -float([1 ; 1; 0; 0])
     x,z,status = interior_points(A, b, c)
+ 
     
     # c) Prob 3 - fase 1
     println("c) Problema fase 1")
     println("")
     A = float([2 1 1 0 0; 1 2 0 1 0; -1 -1 0 0 1])
     b = float([4 ; 4 ; -1])
-    c = float([4 ; 3; 0; 0; 0])
+    c = -float([4 ; 3; 0; 0; 0])
     x,z,status = interior_points(A, b, c)
 
 end
