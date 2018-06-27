@@ -144,12 +144,12 @@ function interior_algorithm(A, b, c, x, s, p, stream, debug=true)
         # 3) computation of newton directions
         μ = ρ *  x' * s / n 
         dx, ds, dp = compute_directions_old(x, s, p, μ, A, b, c)
-        ρ = update_rho(ρ, x+ dx, x)
+        ρ = update_rho(ρ, x + dx, x)
 
         # 4) and 5) update variables
         x, s, p, unbounded = update_variables(x, s, p, dx, ds, dp, α)
 
-        if unbounded
+        if  convergence_error(s, x, μ) > 1e5 &&  all(x .> 0)
             status = -1
             result_log_i(i, x, (c'*x), status, stream, debug)
             return x, s, p, status, it
@@ -177,24 +177,6 @@ function check_infeasible(x)
     end
 
     return false
-end
-
-function check_unbounded(A, b, c, x)
-    # println("A=$A")
-    # println("b=$b")
-    # println("c=$c")
-    # println("x = $x")
-    x=round(x,3)
-
-    xb = x[x.>0]
-    B = A[:, x.>0]
-    cb = c[x.>0]
-    
-    xn = x[x.==0]
-    N = A[:, x.==0]
-    cn = c[ x.==0]
-
-    return all(cb'*B^-1*N .< cn')
 end
 
 function convergence_error(s::Array{Float64}, x::Array{Float64}, μ::Float64)
@@ -265,9 +247,8 @@ function update_variables(x::Array{Float64}, s::Array{Float64}, p::Array{Float64
     x = x + βp * dx
     s = s + βd * ds
     p = p + βd * dp
-    unbounded = false
 
-    return x, s, p, unbounded
+    return x, s, p, false
 end
 
 function update_rho(ρ, x_new, x_old)
