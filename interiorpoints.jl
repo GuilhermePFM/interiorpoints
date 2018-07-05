@@ -103,7 +103,7 @@ function interior_bigM(A, b, c, debug)
 end 
 
 function interior_algorithm(A, b, c, x, s, p, stream, debug=true)
-    err = 1e-3
+    err = 1e-5
     α = 0.9
     ρ = 0.5
     n = size(A)[2]
@@ -120,13 +120,13 @@ function interior_algorithm(A, b, c, x, s, p, stream, debug=true)
             # convergiu
             status = 1
 
-            if norm(x) < norm(p) # check for unbounded problem
-                status = -1
-                pwrite(stream, "The problem is unbounded!")
-            else
+            # if norm(x) < norm(p) # check for unbounded problem
+            #     status = -1
+            #     pwrite(stream, "The problem is unbounded!")
+            # else
 
-                pwrite(stream, "Interior Points algorithm converged! ( s*x criteria)")
-            end
+            #     pwrite(stream, "Interior Points algorithm converged! ( s*x criteria)")
+            # end
 
 
             # if check_unbounded(A, b, c, x)
@@ -275,7 +275,7 @@ function open_log_i(A::Array{Float64,2}, b::Array{Float64,1}, c::Array{Float64,1
         pwrite(stream, "", debug)
         close(stream)
     else
-        stream = open(fname, "w", debug)
+        stream = open(fname, "w")
         pwrite(stream, "=======================", debug)
         pwrite(stream, "Comeco da Solucao do PL", debug)
         pwrite(stream, "=======================", debug)
