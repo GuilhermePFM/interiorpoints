@@ -103,7 +103,7 @@ function interior_bigM(A, b, c, debug)
 end 
 
 function interior_algorithm(A, b, c, x, s, p, stream, debug=true)
-    err = 1e-5
+    err = 1e-7
     α = 0.9
     ρ = 0.5
     n = size(A)[2]
@@ -112,8 +112,11 @@ function interior_algorithm(A, b, c, x, s, p, stream, debug=true)
 
     maxit = 200
     it=0
+    zit = []
     for i in 1:maxit
         pwrite(stream, "It: $i - ϵ = $(convergence_error(s, x, μ)) - x = $x", debug)
+        pwrite(stream, "z: $(-c'*x)", debug)
+        push!(zit, (i, -c'*x))
 
         # 2) 1st test for convergence
         if s'*x < err  # i > 40 && optimality_test(s, x, μ, err) && maximum(abs.(dx)) < err
@@ -138,11 +141,25 @@ function interior_algorithm(A, b, c, x, s, p, stream, debug=true)
             # end
 
             result_log_i(i, x,  (c'*x), status, stream)
+
+            tag = "w"
+            if isfile("z_interior.log")
+                tag="a"
+            end
+            open("z_interior.log", tag) do f
+
+                write(f, "=============\n")
+                write(f, "iteracao, z\n")
+                for (it, z) in zit
+                    write(f, "$it, $z \n")
+                end
+            end
+
             return x, s, p, status, it
         end
         
         # 3) computation of newton directions
-        μ = ρ *  x' * s / n 
+        μ = 0.1 *  x' * s / n 
         dx, ds, dp = compute_directions_old(x, s, p, μ, A, b, c)
         ρ = update_rho(ρ, x + dx, x)
 
